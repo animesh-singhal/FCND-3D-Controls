@@ -69,11 +69,28 @@ VehicleCommand QuadControl::GenerateMotorCommands(float collThrustCmd, V3F momen
   // You'll need the arm length parameter L, and the drag/thrust ratio kappa
 
   ////////////////////////////// BEGIN STUDENT CODE ///////////////////////////
-
+  
+  //kappa = km/kf
+    
+    float l = L / pow(2, 0.5);
+  
+  /*
   cmd.desiredThrustsN[0] = mass * 9.81f / 4.f; // front left
   cmd.desiredThrustsN[1] = mass * 9.81f / 4.f; // front right
   cmd.desiredThrustsN[2] = mass * 9.81f / 4.f; // rear left
   cmd.desiredThrustsN[3] = mass * 9.81f / 4.f; // rear right
+  */
+
+    float c = collThrustCmd;
+    float p = momentCmd.x / l; 
+    float q = momentCmd.y / l;
+    float r = momentCmd.z / kappa;
+    //Note that this c is different from c_bar; c = c_bar*Kf
+
+    cmd.desiredThrustsN[0] = 0.25f * (c + p + q - r) ; // front left - (1)
+    cmd.desiredThrustsN[1] = 0.25f * (c - p + q + r) ; // front right - (2)
+    cmd.desiredThrustsN[3] = 0.25f * (c - p - q - r) ; // rear right - (3)
+    cmd.desiredThrustsN[2] = 0.25f * (c + p - q + r) ; // rear left - (4)
 
   /////////////////////////////// END STUDENT CODE ////////////////////////////
 
@@ -98,8 +115,15 @@ V3F QuadControl::BodyRateControl(V3F pqrCmd, V3F pqr)
 
   ////////////////////////////// BEGIN STUDENT CODE ///////////////////////////
 
+  // p,q,r are angular velocities of the drone along body frame x, y, z axes
   
+  float p_dot = kpPQR.x * (pqrCmd.x - pqr.x);
+  float q_dot = kpPQR.y * (pqrCmd.y - pqr.y);
+  float r_dot = kpPQR.z * (pqrCmd.z - pqr.z);
 
+  momentCmd.x = Ixx * p_dot;
+  momentCmd.y = Iyy * q_dot;
+  momentCmd.z = Izz * r_dot;
   /////////////////////////////// END STUDENT CODE ////////////////////////////
 
   return momentCmd;
@@ -129,8 +153,26 @@ V3F QuadControl::RollPitchControl(V3F accelCmd, Quaternion<float> attitude, floa
 
   ////////////////////////////// BEGIN STUDENT CODE ///////////////////////////
 
+  float c = collThrustCmd / mass;
+    
+  float b_x_commanded = accelCmd.x / c;
+  float b_y_commanded = accelCmd.y / c; 
 
+  float b_x_actual = R(0, 2);
+  float b_y_actual = R(1, 2);
 
+  float b_x_dot_commanded = kpBank * (b_x_commanded - b_x_actual); 
+  float b_y_dot_commanded = kpBank * (b_y_commanded - b_y_actual);
+
+  float R21 = R(1, 0);
+  float R11 = R(0, 0);
+  float R22 = R(1, 1);
+  float R12 = R(0, 1);
+  float R33 = R(2, 2);
+
+  pqrCmd.x = (R21 * b_x_dot_commanded - R11 * b_y_dot_commanded) / R33;
+  pqrCmd.y = (R22 * b_x_dot_commanded - R12 * b_y_dot_commanded) / R33;
+  pqrCmd.z = 0;
   /////////////////////////////// END STUDENT CODE ////////////////////////////
 
   return pqrCmd;
@@ -161,7 +203,20 @@ float QuadControl::AltitudeControl(float posZCmd, float velZCmd, float posZ, flo
 
   ////////////////////////////// BEGIN STUDENT CODE ///////////////////////////
 
+  float velZCmd_constraint = CONSTRAIN(velZCmd, -1 * maxAscentRate, maxDescentRate);
+  // maxAscentRate is just the magnitude. Upwards velocity needs to be negative  
+  // Downwards Z direction is positive. Ascent means velZ<0
+  // velZCmd = Contrained between [-maxAscentRate, maxDescentRate]
+  
+  // Feedforward PD controller
+  float z_ddot = kpPosZ * (posZCmd - posZ) + kpVelZ * (velZCmd_constraint - velZ) + accelZCmd;
+  
+  float gravity = mass * 9.81f; 
 
+
+
+  thrust = (gravity - (z_ddot * mass))/R(2,2); 
+  // (m*z_ddot = gravity - |thrust|) Returning the magnitude of thrust   
 
   /////////////////////////////// END STUDENT CODE ////////////////////////////
   
@@ -199,7 +254,46 @@ V3F QuadControl::LateralPositionControl(V3F posCmd, V3F velCmd, V3F pos, V3F vel
 
   ////////////////////////////// BEGIN STUDENT CODE ///////////////////////////
 
-  
+      
+      // Cascaded Controller -> Level 2 (inner)
+      velCmd.x = kpPosXY * (posCmd.x - pos.x) + velCmd.x;
+      velCmd.y = kpPosXY * (posCmd.y - pos.y) + velCmd.y;
+    
+      
+      float mag_XY_vel = sqrt(pow(velCmd.x, 2) + pow(velCmd.y, 2));     
+
+      // Constraining X and Y linear velocities
+      if (mag_XY_vel > maxSpeedXY) {
+          float downscale_factor = maxSpeedXY / mag_XY_vel;
+          velCmd.x = velCmd.x * downscale_factor;
+          velCmd.y = velCmd.y * downscale_factor;
+      }
+      
+
+      // Cascaded Controller -> Level 1 (outer)
+      accelCmd.x += kpVelXY * (velCmd.x - vel.x) ;
+      accelCmd.y += kpVelXY * (velCmd.y - vel.y) ;
+      // Feedforward term already in the variable definition
+
+      
+      float mag_XY_accel = sqrt(pow(accelCmd.x, 2) + pow(accelCmd.y, 2));
+      
+      // Constraining X and Y linear accelerations
+      if (mag_XY_accel > maxAccelXY) {
+          float downscale_factor = maxAccelXY / mag_XY_accel;
+          accelCmd.x = accelCmd.x * downscale_factor;
+          accelCmd.y = accelCmd.y * downscale_factor;
+      }
+      
+      accelCmd.z = 0;
+      
+      /*
+      velCmd.x = CONSTRAIN(velCmd.x, -maxSpeedXY, maxSpeedXY);
+      velCmd.y = CONSTRAIN(velCmd.y, -maxSpeedXY, maxSpeedXY);
+      accelCmd = kpPosXY * (posCmd - pos) + kpVelXY * (velCmd - vel) + accelCmd;
+      accelCmd.x = CONSTRAIN(accelCmd.x, -maxAccelXY, maxAccelXY);
+      accelCmd.y = CONSTRAIN(accelCmd.y, -maxAccelXY, maxAccelXY);
+      */
 
   /////////////////////////////// END STUDENT CODE ////////////////////////////
 
