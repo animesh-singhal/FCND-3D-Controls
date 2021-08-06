@@ -153,10 +153,20 @@ V3F QuadControl::RollPitchControl(V3F accelCmd, Quaternion<float> attitude, floa
 
   ////////////////////////////// BEGIN STUDENT CODE ///////////////////////////
 
-  float c = collThrustCmd / mass;
+  float c = -collThrustCmd / mass;
+  //collThrustCmd is magnitude of thrust. We assume c vector downwards 
     
   float b_x_commanded = accelCmd.x / c;
   float b_y_commanded = accelCmd.y / c; 
+
+  /* Limiting maximum and minimum angle for roll and pitch
+  * Max angle allowed is 0.7 radians. Sin(0.7) = 0.64
+  * IF we roughly apply small angle approximations
+  * b_x ~ theta  ...(pitch) 
+  * b_y ~ -phi   ...(roll)
+  */
+  b_x_commanded = CONSTRAIN(b_x_commanded, -maxTiltAngle, maxTiltAngle);
+  b_y_commanded = CONSTRAIN(b_y_commanded, -maxTiltAngle, maxTiltAngle);
 
   float b_x_actual = R(0, 2);
   float b_y_actual = R(1, 2);
@@ -174,6 +184,10 @@ V3F QuadControl::RollPitchControl(V3F accelCmd, Quaternion<float> attitude, floa
   pqrCmd.y = (R22 * b_x_dot_commanded - R12 * b_y_dot_commanded) / R33;
   pqrCmd.z = 0;
   /////////////////////////////// END STUDENT CODE ////////////////////////////
+
+
+  float b_x_cmd = CONSTRAIN(accelCmd.x / c, -maxTiltAngle, maxTiltAngle);
+  float b_y_cmd = CONSTRAIN(accelCmd.y / c, -maxTiltAngle, maxTiltAngle);
 
   return pqrCmd;
 }
@@ -207,9 +221,11 @@ float QuadControl::AltitudeControl(float posZCmd, float velZCmd, float posZ, flo
   // maxAscentRate is just the magnitude. Upwards velocity needs to be negative  
   // Downwards Z direction is positive. Ascent means velZ<0
   // velZCmd = Contrained between [-maxAscentRate, maxDescentRate]
-  
+ 
+  integratedAltitudeError += dt * (posZCmd - posZ);
+
   // Feedforward PD controller
-  float z_ddot = kpPosZ * (posZCmd - posZ) + kpVelZ * (velZCmd_constraint - velZ) + accelZCmd;
+  float z_ddot = kpPosZ * (posZCmd - posZ) + kpVelZ * (velZCmd_constraint - velZ) + KiPosZ * integratedAltitudeError + accelZCmd;
   
   float gravity = mass * 9.81f; 
 
@@ -255,7 +271,7 @@ V3F QuadControl::LateralPositionControl(V3F posCmd, V3F velCmd, V3F pos, V3F vel
   ////////////////////////////// BEGIN STUDENT CODE ///////////////////////////
 
       
-      // Cascaded Controller -> Level 2 (inner)
+      // Cascaded Controller -> Level 2 (inner layer)
       velCmd.x = kpPosXY * (posCmd.x - pos.x) + velCmd.x;
       velCmd.y = kpPosXY * (posCmd.y - pos.y) + velCmd.y;
     
@@ -270,7 +286,7 @@ V3F QuadControl::LateralPositionControl(V3F posCmd, V3F velCmd, V3F pos, V3F vel
       }
       
 
-      // Cascaded Controller -> Level 1 (outer)
+      // Cascaded Controller -> Level 1 (outer layer)
       accelCmd.x += kpVelXY * (velCmd.x - vel.x) ;
       accelCmd.y += kpVelXY * (velCmd.y - vel.y) ;
       // Feedforward term already in the variable definition
@@ -287,13 +303,6 @@ V3F QuadControl::LateralPositionControl(V3F posCmd, V3F velCmd, V3F pos, V3F vel
       
       accelCmd.z = 0;
       
-      /*
-      velCmd.x = CONSTRAIN(velCmd.x, -maxSpeedXY, maxSpeedXY);
-      velCmd.y = CONSTRAIN(velCmd.y, -maxSpeedXY, maxSpeedXY);
-      accelCmd = kpPosXY * (posCmd - pos) + kpVelXY * (velCmd - vel) + accelCmd;
-      accelCmd.x = CONSTRAIN(accelCmd.x, -maxAccelXY, maxAccelXY);
-      accelCmd.y = CONSTRAIN(accelCmd.y, -maxAccelXY, maxAccelXY);
-      */
 
   /////////////////////////////// END STUDENT CODE ////////////////////////////
 
@@ -315,6 +324,14 @@ float QuadControl::YawControl(float yawCmd, float yaw)
 
   float yawRateCmd=0;
   ////////////////////////////// BEGIN STUDENT CODE ///////////////////////////
+  
+  yawCmd = fmodf(yawCmd, 2.0 * M_PI);
+  yaw = fmodf(yaw, 2.0 * M_PI);
+
+  float error = (yawCmd - yaw);
+
+
+  yawRateCmd = kpYaw * error;
 
 
   /////////////////////////////// END STUDENT CODE ////////////////////////////
