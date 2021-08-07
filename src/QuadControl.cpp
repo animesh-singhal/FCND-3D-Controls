@@ -159,11 +159,11 @@ V3F QuadControl::RollPitchControl(V3F accelCmd, Quaternion<float> attitude, floa
   float b_x_commanded = accelCmd.x / c;
   float b_y_commanded = accelCmd.y / c; 
 
-  /* Limiting maximum and minimum angle for roll and pitch
-  * Max angle allowed is 0.7 radians. Sin(0.7) = 0.64
-  * IF we roughly apply small angle approximations
-  * b_x ~ theta  ...(pitch) 
-  * b_y ~ -phi   ...(roll)
+  /* Limiting maximum and minimum angle for roll and pitch:
+  *  Max angle allowed is 0.7 radians. Sin(0.7) = 0.64
+  *  IF we roughly apply small angle approximations in R then we get: 
+  *  b_x ~ theta  ...(pitch) 
+  *  b_y ~ -phi   ...(roll)
   */
   b_x_commanded = CONSTRAIN(b_x_commanded, -maxTiltAngle, maxTiltAngle);
   b_y_commanded = CONSTRAIN(b_y_commanded, -maxTiltAngle, maxTiltAngle);
@@ -184,10 +184,6 @@ V3F QuadControl::RollPitchControl(V3F accelCmd, Quaternion<float> attitude, floa
   pqrCmd.y = (R22 * b_x_dot_commanded - R12 * b_y_dot_commanded) / R33;
   pqrCmd.z = 0;
   /////////////////////////////// END STUDENT CODE ////////////////////////////
-
-
-  float b_x_cmd = CONSTRAIN(accelCmd.x / c, -maxTiltAngle, maxTiltAngle);
-  float b_y_cmd = CONSTRAIN(accelCmd.y / c, -maxTiltAngle, maxTiltAngle);
 
   return pqrCmd;
 }

@@ -26,7 +26,11 @@ with open('FigureEight.txt', 'w') as the_file:
 		vy = 0;
 		vz = 0;
 		######## BEGIN STUDENT CODE
-		
+
+		vx = math.cos(t * 2 * math.pi / period[0] + phase[0]) * radius * amp[0] * 2 * math.pi / period[0]
+        vy = math.cos(t * 2 * math.pi / period[1] + phase[1]) * radius * amp[1] * 2 * math.pi / period[1]
+        vz = math.cos(t * 2 * math.pi / period[2] + phase[2]) * radius * amp[2] * 2 * math.pi / period[2]
+
 		######## END STUDENT CODE
 		the_file.write("," + fmt(vx) + "," + fmt(vy) + "," + fmt(vz));
 		######## EXAMPLE SOLUTION

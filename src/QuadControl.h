@@ -40,6 +40,7 @@ public:
   V3F kpPQR;
   
   // limits & saturations
+  // If these are violated, quadrotor will be out of control
   float maxAscentRate, maxDescentRate;
   float maxSpeedXY;
   float maxAccelXY;
