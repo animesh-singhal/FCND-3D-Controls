@@ -69,7 +69,11 @@ Here the subscript a and c denote actual and commanded values respectively. Now,
 
 ![From b to pq](./images/roll_pitch_from_b_to_pq.gif)
 
-It is important to notice you have received the magnitude of thrust in the function arguments. This it need to be inverted and converted to acceleration before applying the equations (as z-acceleration is positive downwards). After the implementation is done, start tuning `kpBank` and `kpPQR` until the drone flies more or less stable upward:
+It is important to notice you have received the magnitude of thrust in the function arguments. This it need to be inverted and converted to acceleration before applying the equations (as z-acceleration is positive downwards). 
+
+Another thing to make sure is constraining the maximum tilt in the roll and pitch angle. This can be applied on `b_x` and `b_y` due to the fact that if you apply small angle approximations, they tend to `theta` and `-phi`.
+
+After the implementation is done, start tuning `kpBank` and `kpPQR` until the drone corrects its roll and angular velocity along x axis:
 
 ![Scenario 2](./images/Scenario_2.gif)
 
@@ -86,21 +90,25 @@ PASS: ABS(Quad.Omega.X) was less than 2.500000 for at least 0.750000 seconds
 
 There are three methods to implement here:
 
-- [AltitudeControl](./cpp/src/QuadControl.cpp#L169-L212): This is a [PD controller](https://en.wikipedia.org/wiki/PID_controller) to control the acceleration meaning the thrust needed to control the altitude.
+- [AltitudeControl](./src/QuadControl.cpp#L191-L236): This is a feedforward [PID controller](https://en.wikipedia.org/wiki/PID_controller) to control the acceleration meaning the thrust needed to control the altitude. `P` term helps in correcting the deviation from the desired position. `D` term reduces the oscillations at the equilibrium position and slows down the quad to attain stability. `I` term helps in correcting the residual error from the equilibrium behaviour when PD controller is not able to bring the quad to desired position and velocity. 
+
+It is important to notice the difference between the [constraints imposed on velocity](./src/QuadControl.cpp#L216) vs [constraints imposed on acceleration](./src/QuadControl.cpp#L346-L347). Accelerations can be directly controlled by changing the net force by varying the omegas of rotors. So this constraint can be put after finding the output from the PID controller. If the controller asks for a=2.2 m/s^2 and quad is only capable of providing 2 m/s^2, the desired acceleration can be overwritten by this threshold. This is not the case for velocity constrains. Let's say, we need a velocity higher than maxAscentRate. We give it to the controller and it generates some acceleration to achieve it. Now, that would result in the increase in velocity. Now if it already has some acceleration, the quad's velocity cannot be changed immediately if it surpasses the maximum velocity threshold even by instantaneously changing the acceleration. To avoid that, the commanded velocity should be kept in check so that the quad never crosses the threshold. 
 
 ![Altitude controller equations](./images/altitude_eq.gif)
 
-To test this, go back to scenario 2 and make sure the drone doesn't fall. In that scenario, the PID is configured not to act, and the thrust should be `mass * CONST_GRAVITY`.
+To test this, go back to scenario 2 and make sure the drone doesn't fall. In that scenario, the desired z position is set at some constant value with zero net velocity and acceleration. In this case, the thrust should be `mass * CONST_GRAVITY`.
 
-- [LateralPositionControl](./cpp/src/QuadControl.cpp#L215-L267) This is another PID controller to control acceleration on `x` and `y`.
+- [LateralPositionControl](./src/QuadControl.cpp#L239-L306): This is [cascaded proportional controller](https://www.overleaf.com/read/bgrkghpggnyc#/61023787/) (inner one to get velocity and an outer one to get acceleration) to control acceleration on `x` and `y`. This helps us in tuning the parameters as there exists a relation between gains for a critically damped condition (`Kv`/`Kp` ~ 4). 
+ 
+It is important to note the way velocity and accleration constrainsts have been applied in the X-Y plane. Recall that while finding the magnitude a vector, if each component is scaled by a factor `k` then the magnitude of the whole vector gets scaled by `k`. To limit the net velocity and acceleration in X-Y plane, a downscaling factor needs to be calculated so that net vector's magnitude stays within the constrained values.   
 
-- [YawControl](./cpp/src/QuadControl.cpp#L270-L302): This is a simpler case because it is P controller. It is better to optimize the yaw to be between `[-pi, pi]`.
+- [YawControl](./src/QuadControl.cpp#L309-L337): This is a simpler case because it is P controller (as yaw is being related to its first derivative only). It is better to optimize the yaw to be between `[0, 2*pi]`. This will ensure that the difference between actual and commanded yaw would lie between `[-2*pi, 2*pi]`. For instance, if this is not done, the difference of `2*pi` and `4*pi` might mean the same mathematically, but would command higher magnitude of angular velocity along the z axis. 
 
-Once all the code is implemented, put all the `kpYaw`,`kpPosXY`, `kpVelXY`, `kpPosZ` and `kpVelZ` to zero. Take a deep breath, and start tuning from the altitude controller to the yaw controller. It takes time. Here is a video of the scenario when it passes:
+Note: Avoid changing the gains of the controller that were already tuned. We go from tuning the innermost controller to the outermost chronologically. Here is a video of the scenario when it passes:
 
-![C++ Scenario 3](./images/cpp-scenario-3.gif)
+![Scenario 3](./images/Scenario_3.gif)
 
-This video is [cpp-scenario-3.mov](./videos/cpp-scenario-3.mov)
+This video is [Scenario_3.mp4](./videos/Scenario_3.mp4)
 
 When the scenario is passing the test, you should see this line on the standard output:
 
@@ -112,11 +120,11 @@ PASS: ABS(Quad2.Yaw) was less than 0.100000 for at least 1.000000 seconds
 
 #### Scenario 4: Non-idealities and robustness
 
-This is a fun scenario. Everything is coded and tuned already, right? Ok, we need to add an integral part to the altitude controller to move it from PD to PID controller. What happens to me here is that everything starts not working correctly, and I have to tune everything again, starting from scenario -1. Remember patience is a "virtue", and to it again. If you cannot and get frustrated talk to your peers, they will be able to give you hints. It is hard but doable:
+This is a fun scenario. Everything is almost coded and tuned already (given that Integral term was added while designing the Altitude controller). Minor tweaking of the gains might be required here though. If the quad with off-center COM is drifting way too much from the straight line joining the start and end point, increasing the proportional gain will help to apply stronger force to reduce deviation. If it starts overshooting the target increasing the differential gain term would help to quickly change the velocity. If the heavier quad is sinking downwards, increasing the proportional term will help in getting it up during its motion. Increasing the integral term will help in correcting the z-position at the final position if it is still lower than the desired height. Here's how the result of this scenario will look like:
 
-![C++ Scenario 4](./images/cpp-scenario-4.gif)
+![Scenario 4](./images/Scenario_4.gif)
 
-This video is [cpp-scenario-4.mov](./videos/cpp-scenario-4.mov)
+This video is [Scenario_4.mp4](./videos/Scenario_4.mp4)
 
 When the scenario is passing the test, you should see this line on the standard output:
 
@@ -128,11 +136,13 @@ PASS: ABS(Quad3.PosFollowErr) was less than 0.100000 for at least 1.500000 secon
 
 #### Scenario 5: Tracking trajectories
 
-This is the final non-optional scenario. The drone needs to follow a trajectory. It will show all the errors in your code and also force you to tune some parameters again. Remember there are comments on the controller methods regarding limits that need to be imposed on the system. Here those limits are required in order to pass.
+At this point, the yellow quad will most likely follow the figure eight shaped trajectory. You can play with the gains to decrease the settling time (increasing the proportional gains will help). You might not be able to ace this scenario if the constraints are not put on the various state variables of the quad. This might result into random behavior of the drone once those constraints are surpassed. 
 
-![C++ Scenario 5](./images/cpp-scenario-5.gif)
+The extra challenge in this scenario is to complete the trajectory planning for the red colored quad. It only has the position command at various time stamps. Various approaches can be adopted to calculate the velocity values at each waypoint the quad needs to follow. This can be done in [Generate_pos_vel_Fig_8.ipynb](./config/traj/Generate_pos_vel_Fig_8.ipynb) by assigning values to `vx`, `vy`, `vz`. After running this python script, red drone's [trajectory file](./config/traj/FigureEight.txt) will get updated with the velocity information. This additon will provide the feed-forward velocity terms in the controller equations. The yellow drone's [trajectory file](./config/traj/FigureEightFF.txt) already contains the velocity information. 
 
-This video is [cpp-scenario-5.mov](./videos/cpp-scenario-5.mov)
+![Scenario 5](./images/Scenario_5.gif)
+
+This video is [Scenario_5.mp4](./videos/Scenario_5.mp4)
 
 When the scenario is passing the test, you should see this line on the standard output:
 
@@ -140,17 +150,12 @@ When the scenario is passing the test, you should see this line on the standard 
 PASS: ABS(Quad2.PosFollowErr) was less than 0.250000 for at least 3.000000 seconds
 ```
 
-There are a few optional scenarios on this project, but I was exhausted. Too many long hours were tuning parameters and finding bugs. There should be a lot of room for improvement. Here is the video of a multi-drone scenario:
+#### Scenario 6: Multi Drone Trajectory Tracking
+There is one more optional scenario on this project. If the above scenarios were programmed and tuned correctly, this would be a cake-walk. Here is the video of this scenario:
 
-![C++ Multidrone](./images/cpp-scenario-multi-drone.gif)
+![Scenario 6](./images/Scenario_6.gif)
 
-No idea why some of them go nuts!!!!! (and then come back to the "formation".)
-
-**Post submit note** The tilt angle limit enforcing was missing on the `RollPitchControl`. Here is a video with no-crazy drones:
-
-![C++ Multidrone ok](./images/cpp-scenario-multi-drone-1.gif)
-
-Here is the [video](./videos/cpp-scenario-multi-drone-1.gif).
+This video is [Scenario_6.mp4](./videos/Scenario_6.mp4)
 
 # [Project Rubric](https://review.udacity.com/#!/rubrics/1643/view)
 
@@ -161,50 +166,33 @@ This markdown is the write-up.
 
 ## Implemented Controller
 
-### Implemented body rate control in python and C++.
+### Implemented body rate control in C++.
 
-The body rate control is implemented as proportional control in [/python/controller.py body_rate_control method](./python/controller.py#L179-L195) from line 179 to 195 using Python and in [/cpp/src/QuadControl::BodyRateControl method ](/cpp/src/QuadControl.cpp#L95-L121) from line 95 to 121 using C++.
+The body rate control is implemented as proportional control in [/src/QuadControl::BodyRateControl method ](/src/QuadControl.cpp#L100-L130) from line 100 to 130 using C++.
 
-### Implement roll pitch control in python and C++.
+### Implement roll pitch control in C++.
 
-The roll pitch control is implemented in [/python/controller.py roll_pitch_controller method](./python/controller.py#L142-L177) from line 142 to 177 using Python and in [/cpp/src/QuadControl::RollPitchControl method ](/cpp/src/QuadControl.cpp#L124-L167) from line 124 to 167 using C++.
-
-### Implement altitude control in python.
-
-The altitude control is implemented in [/python/controller.py altitude_control method](./python/controller.py#L112-L139) from line 112 to 139 using Python.
+The roll pitch control is implemented in [/src/QuadControl::RollPitchControl method ](/src/QuadControl.cpp#L133-L189) from line 133 to 189 using C++.
 
 ### Implement altitude controller in C++.
 
-The altitude control is implemented in [/cpp/src/QuadControl::AltitudeControl method ](/cpp/src/QuadControl.cpp#L169-L212) from line 169 to 212 using C++.
+The altitude control is implemented in [/src/QuadControl::AltitudeControl method ](/src/QuadControl.cpp#L191-L236) from line 191 to 236 using C++.
 
-### Implement lateral position control in python and C++.
+### Implement lateral position control in C++.
 
-The lateral position control is implemented in [/python/controller.py lateral_position_control method](./python/controller.py#L93-L124) from line 93 to 124 using Python and in [/cpp/src/QuadControl::LateralPositionControl method ](/cpp/src/QuadControl.cpp#L215-L267) from line 215 to 267 using C++.
+The lateral position control is implemented in [/src/QuadControl::LateralPositionControl method ](/src/QuadControl.cpp#L239-L305) from line 239 to 305 using C++.
 
-### Implement yaw control in python and C++.
+### Implement yaw control in C++.
 
-The yaw control is implemented in [/python/controller.py yaw_control method](./python/controller.py#L197-L214) from line 197 to 214 using Python and in [/cpp/src/QuadControl::YawControl method ](/cpp/src/QuadControl.cpp#L270-L302) from line 270 to 302 using C++.
+The yaw control is implemented in [/src/QuadControl::YawControl method ](/src/QuadControl.cpp#L309-L337) from line 309 to 337 using C++.
 
 ### Implement calculating the motor commands given commanded thrust and moments in C++.
 
-The calculation implementation for the motor commands is in [/cpp/src/QuadControl::GenerateMotorCommands method ](/cpp/src/QuadControl.cpp#L58-L93) from line 58 to 93.
+The calculation implementation for the motor commands is in [/src/QuadControl::GenerateMotorCommands method ](/src/QuadControl.cpp#L56-L98) from line 56 to 98.
 
 ## Flight Evaluation
 
-### Your python controller is successfully able to fly the provided test trajectory, meeting the minimum flight performance metrics.
 
-> For this, your drone must pass the provided evaluation script with the default parameters. These metrics being, your drone flies the test trajectory faster than 20 seconds, the maximum horizontal error is less than 2 meters, and the maximum vertical error is less than 1 meter.
-
-The Python implementation meets the minimum flight performance metrics:
-
-```
-Maximum Horizontal Error:  1.896498169249138
-Maximum Vertical Error:  0.636822964449316
-Mission Time:  2.121786
-Mission Success:  True
-```
-
-Telemetry files are provided on the [/python/telemetry](./python/telemetry) directory.
 
 ### Your C++ controller is successfully able to fly the provided test trajectory and visually passes the inspection of the scenarios leading up to the test trajectory.
 
