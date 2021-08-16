@@ -2,15 +2,17 @@
 Udacity Flying Car Nanodegree -  Project 3 - 3D Quadrotor Controller
 
 In this project, I have implement and tuned a [cascade PID controller](https://controlstation.com/cascade-control-cascade-control-configured/) for drone trajectory tracking. The theory behind the controller design using feed-forward strategy is explained in details on Udacity's instructor, [Angela P. Schoellig](http://www.dynsyslab.org/prof-angela-schoellig/), on her paper [Feed-Forward Parameter Identification for Precise Periodic
-Quadrocopter Motions](http://www.dynsyslab.org/wp-content/papercite-data/pdf/schoellig-acc12.pdf). The following diagram could be found on that paper describing the cascaded control loops of the trajectory-following controller:
+Quadrocopter Motions](http://www.dynsyslab.org/wp-content/papercite-data/pdf/schoellig-acc12.pdf). The following diagram could be found in the course content describing the cascaded control loops of the trajectory-following controller:
 
-![Cascade control](./images/cascade_control_from_article.png)
+![Cascade control](./images/Cascaded_controller_1.PNG)
+
+The idea is to start with tuning and buildng the inner most controller first. Then the controllers dependent on it are tuned further. The project gives the intuition of how going from innermost to outer controller building takes place in practice.  
 
 # Project description
 
-A casaded controller needs to be implemented for this project using C++.
+A casaded controller needs to be implemented for this project using C++. 
 
-## Overview
+## Overview of the project
 
 Udacity provides a [seed project](https://github.com/udacity/FCND-Controls-CPP) with the simulator implementation and placeholders for the controller code. The seed project README.md give guides to run the project and information of the task we need to execute for implementing the controller. There are five scenarios we need to cover. The simulator runs in a loop on the current scenario and show on the standard output an indication the scenario pass or not.
 
@@ -43,27 +45,35 @@ PASS: ABS(Quad.PosFollowErr) was less than 0.500000 for at least 0.800000 second
 
 #### Scenario 2: Body rate and roll/pitch control
 
-Now is time to start coding. The [GenerateMotorCommands method](./cpp/src/QuadControl.cpp#L58-L93) needs to be coded resolving this equations:
+We begin by establishing a relation between the rotor forces and the (a) Required net fore in z direction; (b) Required net torque along x, y, z axes. This is enable the drone to adjust the rotor speed according to how the controller commands to net forces and torque to be on the system. The [GenerateMotorCommands method](./src/QuadControl.cpp#L56-L98) needs to be coded resolving this equations:
 
-![Moment force equations](./images/moments_force_eq.gif)
+![Moment force equations](./images/moments_force_eq.PNG)
 
-Where all the `F_1` to `F_4` are the motor's thrust, `tao(x,y,z)` are the moments on each direction, `F_t` is the total thrust, kappa is the drag/thrust ratio and `l` is the drone arm length over square root of two. These equations come from the classroom lectures. There are a couple of things to consider. For example, on NED coordinates the `z` axis is inverted that is why the moment on `z` was inverted here. Another observation while implementing this is that `F_3` and `F_4` are switched, e.g. `F_3` in the lectures is `F_4` on the simulator and the same for `F_4`.
+Where all the `kf*(omega_1^2)` to `kf*(omega_1^2)` would be the motor's thrust at each rotor, `I_x*u_p_bar` would be the moments along the x direction, `c_bar*kf` is the total thrust, kappa is the drag/thrust ratio and `l` is the drone arm length over square root of two. These equations come from the classroom lectures. There are a couple of things to consider. For example, on NED coordinates the `z` axis is inverted that is why the moment on `z` was inverted here. Another thing to note is the numbering of the rotors: front left->(1); front right->(2); rear right->(3); rear left->(4).
 
-The second step is to implement the [BodyRateControl method](./cpp/src/QuadControl.cpp#L95-L121) applying a [P controller](https://en.wikipedia.org/wiki/Proportional_control) and the moments of inertia. At this point, the `kpPQR` parameter has to be tuned to stop the drone from flipping, but first, some thrust needs to be commanded in the altitude control because we don't have thrust commanded on the `GenerateMotorCommands` anymore. A good value is `thurst = mass * CONST_GRAVITY`.
+Now is the time to start coding the controller. Here we deal with the innermost Attitude controller which further contains the following three controllers within it: 
 
-Once this is done, we move on to the [RollPitchControl method](./cpp/src/QuadControl.cpp#L124-L167). For this implementation, you need to apply a few equations. You need to apply a P controller to the elements `R13` and `R23` of the [rotation matrix](https://en.wikipedia.org/wiki/Rotation_matrix) from body-frame accelerations and world frame accelerations:
+![Attitude controller](./images/Cascaded_controller_2.PNG)
+
+In scenario 2, simulator gives the drone an initial disturbance: an initial angular velocity about x axis. Task is to do something so that the angular velocity goes back to zero (acheived by Body rate controller) and the angular positon about x axis (roll) goes back to zero (achieved by roll, pitch and yaw controllers). 
+
+Ideally the Body rate controller will receive the commanded angular velocity from roll, pitch and yaw controllers but that'll happen when all four of those controllers are functional. We get started by ignoring roll, pitch and yaw controllers and manually command the Body Rate Controller to maintain zero angular velocity and tune it. Once it responds to this command, we start setting up roll, pitch and yaw controllers to give it the angular velocities desired to make roll, pitch, yaw back to zero (which is again a manual command). These controllers will obtain obtain commands from higher level controllers (Lateral and Altitude controllers) to compute the desired values of roll, pitch and yaw. 
+
+The first step is to implement the [BodyRateControl method](./src/QuadControl.cpp#L100-L130) applying a [P controller](https://en.wikipedia.org/wiki/Proportional_control) and the moments of inertia. At this point, the `kpPQR` parameter has to be tuned to stop the drone from flipping, but first, some thrust needs to be commanded in the altitude control because we don't have thrust commanded on the `GenerateMotorCommands` anymore. A good value is `thurst = mass * CONST_GRAVITY` (this is chosen to simply things by commanding the drone to just balance the gravitational force with no intent of acelerating in the z direction)
+
+Once this is done, we move on to the [RollPitchControl method](./cpp/src/QuadControl.cpp#L124-L167) (because the initial disturbance was given along the x axis). For this implementation, you need to apply a few equations. You need to apply a P controller to the elements `R13` and `R23` of the [rotation matrix](https://en.wikipedia.org/wiki/Rotation_matrix) from body-frame accelerations and world frame accelerations:
 
 ![Roll and pitch P controller](./images/roll_pitch_p_controller.gif)
 
-But the problem is you need to output roll and pitch rates; so, there is another equation to apply:
+Here the subscript a and c denote actual and commanded values respectively. Now, as we need to output roll and pitch rates, there is another equation to apply:
 
 ![From b to pq](./images/roll_pitch_from_b_to_pq.gif)
 
-It is important to notice you received thrust and thrust it need to be inverted and converted to acceleration before applying the equations. After the implementation is done, start tuning `kpBank` and `kpPQR`(again? yes, and it is not the last time) until the drone flies more or less stable upward:
+It is important to notice you have received the magnitude of thrust in the function arguments. This it need to be inverted and converted to acceleration before applying the equations (as z-acceleration is positive downwards). After the implementation is done, start tuning `kpBank` and `kpPQR` until the drone flies more or less stable upward:
 
-![C++ Scenario 2](./images/cpp-scenario-2.gif)
+![Scenario 2](./images/Scenario_2.gif)
 
-This video is [cpp-scenario-2.mov](./videos/cpp-scenario-2.mov)
+This video is [Scenario_2.mp4](./videos/Scenario_2.mp4)
 
 When the scenario is passing the test, you should see this line on the standard output:
 
