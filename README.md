@@ -92,18 +92,19 @@ There are three methods to implement here:
 
 - [AltitudeControl](./src/QuadControl.cpp#L191-L236): This is a feedforward [PID controller](https://en.wikipedia.org/wiki/PID_controller) to control the acceleration meaning the thrust needed to control the altitude. `P` term helps in correcting the deviation from the desired position. `D` term reduces the oscillations at the equilibrium position and slows down the quad to attain stability. `I` term helps in correcting the residual error from the equilibrium behaviour when PD controller is not able to bring the quad to desired position and velocity. 
 
-Following are the equations of motion realted to this controller: 
+Following are the equations of motion related to this controller:
+
 ![Altitude controller equations](./images/altitude_eq.gif)
 
 It is important to notice the difference between the [constraints imposed on velocity](./src/QuadControl.cpp#L216) vs [constraints imposed on acceleration](./src/QuadControl.cpp#L346-L347). Accelerations can be directly controlled by changing the net force by varying the omegas of rotors. So this constraint can be put after finding the output from the PID controller. If the controller asks for a=2.2 m/s^2 and quad is only capable of providing 2 m/s^2, the desired acceleration can be overwritten by this threshold. This is not the case for velocity constrains. Let's say, we need a velocity higher than maxAscentRate. We give it to the controller and it generates some acceleration to achieve it. Now, that would result in the increase in velocity. Now if it already has some acceleration, the quad's velocity cannot be changed immediately if it surpasses the maximum velocity threshold even by instantaneously changing the acceleration. To avoid that, the commanded velocity should be kept in check so that the quad never crosses the threshold.
 
 To test this, go back to scenario 2 and make sure the drone doesn't fall. In that scenario, the desired z position is set at some constant value with zero net velocity and acceleration. In this case, the thrust should be `mass * CONST_GRAVITY`.
 
-- [LateralPositionControl](./src/QuadControl.cpp#L239-L306): This is [cascaded proportional controller](./Double_Integrator_Control__Cascaded_P_Controller_Gains_vs_Damping_Ratio.pdf) (inner one to get velocity and an outer one to get acceleration) to control acceleration on `x` and `y`. This helps us in tuning the parameters as there exists a relation between gains for a critically damped condition (`Kv`/`Kp` ~ 4). 
+- [LateralPositionControl](./src/QuadControl.cpp#L239-L306): This is [cascaded proportional controller](https://www.overleaf.com/read/bgrkghpggnyc#/61023787/) (inner one to get velocity and an outer one to get acceleration) to control acceleration on `x` and `y`. This helps us in tuning the parameters as there exists a relation between gains for a critically damped condition (`Kv`/`Kp` ~ 4). Note that implementing a feedforward PD controller was also an option which could have implemented here but wasn't chosen as `Kp and Kd` don't have a relation between them unlike `Kp and Kv`. 
  
-It is important to note the way velocity and accleration constrainsts have been applied in the X-Y plane. Recall that while finding the magnitude a vector, if each component is scaled by a factor `k` then the magnitude of the whole vector gets scaled by `k`. To limit the net velocity and acceleration in X-Y plane, a downscaling factor needs to be calculated so that net vector's magnitude stays within the constrained values.   
+It is important to note the way [velocity constraints](./src/QuadControl.cpp#L275-L282) and [accleration constraints](./src/QuadControl.cpp#L291-L298) have been applied in the X-Y plane. Recall that while finding the magnitude of a vector, if each component is scaled by a factor `k` then the magnitude of the whole vector gets scaled by `k`. To limit the net velocity and acceleration in X-Y plane, a [downscaling factor](./src/QuadControl.cpp#L279) needs was calculated so that net vector's magnitude stays within the constrained values.   
 
-- [YawControl](./src/QuadControl.cpp#L309-L337): This is a simpler case because it is P controller (as yaw is being related to its first derivative only). It is better to optimize the yaw to be between `[0, 2*pi]`. This will ensure that the difference between actual and commanded yaw would lie between `[-2*pi, 2*pi]`. For instance, if this is not done, the difference of `2*pi` and `4*pi` might mean the same mathematically, but would command higher magnitude of angular velocity along the z axis. 
+- [YawControl](./src/QuadControl.cpp#L309-L337): This is a simpler case because it is P controller (as yaw is being related to its first derivative only). It is better to optimize the yaw to be between `[0, 2*pi]`. This will ensure that the difference between actual and commanded yaw would lie between `[-2*pi, 2*pi]`. Suppose you don't do this and consider the two example cases where the difference between the angles are `2*pi` or `4*pi`. Both will mean the same mathematically, but would command higher magnitude of angular velocity along the z-axis. 
 
 Note: Avoid changing the gains of the controller that were already tuned. We go from tuning the innermost controller to the outermost chronologically. Here is a video of the scenario when it passes:
 
@@ -121,7 +122,7 @@ PASS: ABS(Quad2.Yaw) was less than 0.100000 for at least 1.000000 seconds
 
 #### Scenario 4: Non-idealities and robustness
 
-This is a fun scenario. Everything is almost coded and tuned already (given that Integral term was added while designing the Altitude controller). Minor tweaking of the gains might be required here though. If the quad with off-center COM is drifting way too much from the straight line joining the start and end point, increasing the proportional gain will help to apply stronger force to reduce deviation. If it starts overshooting the target increasing the differential gain term would help to quickly change the velocity. If the heavier quad is sinking downwards, increasing the proportional term will help in getting it up during its motion. Increasing the integral term will help in correcting the z-position at the final position if it is still lower than the desired height. Here's how the result of this scenario will look like:
+This is a fun scenario. Everything is almost coded and tuned already (given that Integral term was added while designing the Altitude controller). Minor tweaking of the gains might be required here though. If the quad with off-center COM (yellow) is drifting way too much from the straight line joining the start and end point, increasing the proportional gain will help to apply stronger force to reduce deviation. If it starts overshooting the target, increasing the differential gain term would help to quickly change the velocity. If the heavier quad (red) is sinking downwards, increasing the proportional term will help in getting it up during its motion. Increasing the integral term will help in correcting the z-position at the final position if it is still lower than the desired height. Here's how the result of this scenario will look like:
 
 ![Scenario 4](./images/Scenario_4.gif)
 
@@ -140,6 +141,8 @@ PASS: ABS(Quad3.PosFollowErr) was less than 0.100000 for at least 1.500000 secon
 At this point, the yellow quad will most likely follow the figure eight shaped trajectory. You can play with the gains to decrease the settling time (increasing the proportional gains will help). You might not be able to ace this scenario if the constraints are not put on the various state variables of the quad. This might result into random behavior of the drone once those constraints are surpassed. 
 
 The extra challenge in this scenario is to complete the trajectory planning for the red colored quad. It only has the position command at various time stamps. Various approaches can be adopted to calculate the velocity values at each waypoint the quad needs to follow. This can be done in [Generate_pos_vel_Fig_8.ipynb](./config/traj/Generate_pos_vel_Fig_8.ipynb) by assigning values to `vx`, `vy`, `vz`. After running this python script, red drone's [trajectory file](./config/traj/FigureEight.txt) will get updated with the velocity information. This additon will provide the feed-forward velocity terms in the controller equations. The yellow drone's [trajectory file](./config/traj/FigureEightFF.txt) already contains the velocity information. 
+
+Here's how the result of this scenario will look like:
 
 ![Scenario 5](./images/Scenario_5.gif)
 
@@ -197,7 +200,7 @@ The calculation implementation for the motor commands is in [/src/QuadControl::G
 
 ### Your C++ controller is successfully able to fly the provided test trajectory and visually passes the inspection of the scenarios leading up to the test trajectory.
 
-> Ensure that in each scenario the drone looks stable and performs the required task. Specifically check that the student's controller is able to handle the non-linearities of scenario 4 (all three drones in the scenario should be able to perform the required task with the same control gains used).
+> Ensure that in each scenario the drone looks stable and performs the required task. Specifically check that the controller is able to handle the non-linearities of scenario 4 (all three drones in the scenario should be able to perform the required task with the same control gains used).
 
 The implementation pass scenarios 1 - 5 on the C++ simulator:
 
