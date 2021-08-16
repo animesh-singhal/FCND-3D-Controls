@@ -6,11 +6,11 @@ Quadrocopter Motions](http://www.dynsyslab.org/wp-content/papercite-data/pdf/sch
 
 ![Cascade control](./images/Cascaded_controller_1.PNG)
 
-The idea is to start with tuning and buildng the inner most controller first. Then the controllers dependent on it are tuned further. The project gives the intuition of how going from innermost to outer controller building takes place in practice.  
+The idea is to start with tuning and building the inner most controller first. Then the controllers dependent on it are tuned further. The project gives the intuition of how going from innermost to outer controller building takes place in practice.  
 
 # Project description
 
-A casaded controller needs to be implemented for this project using C++. 
+A casaded controller needs to be implemented for this project using C++ so that the quad can follow the commanded trajectory. The controller should be able to handle deviations like heavier mass than what the model accounted for or an offset in the quad's center of mass. The quad should operate within the dynamic and legal constraints.   
 
 ## Overview of the project
 
@@ -45,11 +45,11 @@ PASS: ABS(Quad.PosFollowErr) was less than 0.500000 for at least 0.800000 second
 
 #### Scenario 2: Body rate and roll/pitch control
 
-We begin by establishing a relation between the rotor forces and the (a) Required net fore in z direction; (b) Required net torque along x, y, z axes. This is enable the drone to adjust the rotor speed according to how the controller commands to net forces and torque to be on the system. The [GenerateMotorCommands method](./src/QuadControl.cpp#L56-L98) needs to be coded resolving this equations:
+We begin by establishing a relation between the rotor forces and (a) Required net force in z direction; (b) Required net torque along the quad's local frame's x, y, z axes. This will enable the drone to adjust the rotor speed according to the net forces and torque on the system commanded by the controller. The [GenerateMotorCommands method](./src/QuadControl.cpp#L56-L98) needs to be programmed resolving these equations:
 
 ![Moment force equations](./images/moments_force_eq.PNG)
 
-Where all the `kf*(omega_1^2)` to `kf*(omega_1^2)` would be the motor's thrust at each rotor, `I_x*u_p_bar` would be the moments along the x direction, `c_bar*kf` is the total thrust, kappa is the drag/thrust ratio and `l` is the drone arm length over square root of two. These equations come from the classroom lectures. There are a couple of things to consider. For example, on NED coordinates the `z` axis is inverted that is why the moment on `z` was inverted here. Another thing to note is the numbering of the rotors: front left->(1); front right->(2); rear right->(3); rear left->(4).
+Where all `kf*(omega_1^2)` would be the motor's thrust at the first rotor, `I_x*u_p_bar` would be the net torque along the x-axis, `c_bar*kf` is the total thrust, kappa is the drag/thrust ratio (`kappa=km/kf`) and `l` is the drone arm length over square root of two. These equations come from the classroom lectures. There are a couple of things to consider. For example, on NED coordinates the `z` axis is inverted that is why the moment on `z` was inverted here. Another thing to note is the numbering of the rotors: front left->(1); front right->(2); rear right->(3); rear left->(4).
 
 Now is the time to start coding the controller. Here we deal with the innermost Attitude controller which further contains the following three controllers within it: 
 
@@ -57,9 +57,9 @@ Now is the time to start coding the controller. Here we deal with the innermost 
 
 In scenario 2, simulator gives the drone an initial disturbance: an initial angular velocity about x axis. Task is to do something so that the angular velocity goes back to zero (acheived by Body rate controller) and the angular positon about x axis (roll) goes back to zero (achieved by roll, pitch and yaw controllers). 
 
-Ideally the Body rate controller will receive the commanded angular velocity from roll, pitch and yaw controllers but that'll happen when all four of those controllers are functional. We get started by ignoring roll, pitch and yaw controllers and manually command the Body Rate Controller to maintain zero angular velocity and tune it. Once it responds to this command, we start setting up roll, pitch and yaw controllers to give it the angular velocities desired to make roll, pitch, yaw back to zero (which is again a manual command). These controllers will obtain obtain commands from higher level controllers (Lateral and Altitude controllers) to compute the desired values of roll, pitch and yaw. 
+Ideally the Body rate controller will receive the commanded angular velocity from roll, pitch and yaw controllers but that'll happen when all four of those controllers are functional. We get started by ignoring roll, pitch and yaw controllers and manually command the Body Rate Controller to maintain zero angular velocity and tune it. Once it responds to this command, we start setting up roll, pitch and yaw controllers to give it the angular velocities desired to make roll, pitch, yaw back to zero (which is again a manual command). These controllers will obtain commands from higher level controllers (Lateral and Altitude controllers) to compute the desired values of roll, pitch and yaw. 
 
-The first step is to implement the [BodyRateControl method](./src/QuadControl.cpp#L100-L130) applying a [P controller](https://en.wikipedia.org/wiki/Proportional_control) and the moments of inertia. At this point, the `kpPQR` parameter has to be tuned to stop the drone from flipping, but first, some thrust needs to be commanded in the altitude control because we don't have thrust commanded on the `GenerateMotorCommands` anymore. A good value is `thurst = mass * CONST_GRAVITY` (this is chosen to simply things by commanding the drone to just balance the gravitational force with no intent of acelerating in the z direction)
+The first step is to implement the [BodyRateControl method](./src/QuadControl.cpp#L100-L130) applying a [P controller](https://en.wikipedia.org/wiki/Proportional_control). At this point, the `kpPQR` parameter has to be tuned to stop the drone from flipping, but first, some thrust needs to be commanded in the altitude control because we don't have thrust commanded on the `GenerateMotorCommands` anymore. A good value is `thurst = mass * CONST_GRAVITY` (this is chosen to simply things by commanding the drone to just balance the gravitational force with no intent of acelerating in the z direction)
 
 Once this is done, we move on to the [RollPitchControl method](./cpp/src/QuadControl.cpp#L124-L167) (because the initial disturbance was given along the x axis). For this implementation, you need to apply a few equations. You need to apply a P controller to the elements `R13` and `R23` of the [rotation matrix](https://en.wikipedia.org/wiki/Rotation_matrix) from body-frame accelerations and world frame accelerations:
 
@@ -69,9 +69,9 @@ Here the subscript a and c denote actual and commanded values respectively. Now,
 
 ![From b to pq](./images/roll_pitch_from_b_to_pq.gif)
 
-It is important to notice you have received the magnitude of thrust in the function arguments. This it need to be inverted and converted to acceleration before applying the equations (as z-acceleration is positive downwards). 
+It is important to notice you have received the magnitude of thrust in the function arguments. This needs to be inverted and converted to acceleration with a proper sign before applying the equations (as z-acceleration is positive downwards). 
 
-Another thing to make sure is constraining the maximum tilt in the roll and pitch angle. This can be applied on `b_x` and `b_y` due to the fact that if you apply small angle approximations, they tend to `theta` and `-phi`.
+Another thing to make sure is constraining the maximum tilt in the roll and pitch angle. This can be applied on `b_x` and `b_y` due to the fact that if you apply small angle approximations, they tend to `theta` and `-phi` respectively.
 
 After the implementation is done, start tuning `kpBank` and `kpPQR` until the drone corrects its roll and angular velocity along x axis:
 
@@ -92,13 +92,14 @@ There are three methods to implement here:
 
 - [AltitudeControl](./src/QuadControl.cpp#L191-L236): This is a feedforward [PID controller](https://en.wikipedia.org/wiki/PID_controller) to control the acceleration meaning the thrust needed to control the altitude. `P` term helps in correcting the deviation from the desired position. `D` term reduces the oscillations at the equilibrium position and slows down the quad to attain stability. `I` term helps in correcting the residual error from the equilibrium behaviour when PD controller is not able to bring the quad to desired position and velocity. 
 
-It is important to notice the difference between the [constraints imposed on velocity](./src/QuadControl.cpp#L216) vs [constraints imposed on acceleration](./src/QuadControl.cpp#L346-L347). Accelerations can be directly controlled by changing the net force by varying the omegas of rotors. So this constraint can be put after finding the output from the PID controller. If the controller asks for a=2.2 m/s^2 and quad is only capable of providing 2 m/s^2, the desired acceleration can be overwritten by this threshold. This is not the case for velocity constrains. Let's say, we need a velocity higher than maxAscentRate. We give it to the controller and it generates some acceleration to achieve it. Now, that would result in the increase in velocity. Now if it already has some acceleration, the quad's velocity cannot be changed immediately if it surpasses the maximum velocity threshold even by instantaneously changing the acceleration. To avoid that, the commanded velocity should be kept in check so that the quad never crosses the threshold. 
-
+Following are the equations of motion realted to this controller: 
 ![Altitude controller equations](./images/altitude_eq.gif)
+
+It is important to notice the difference between the [constraints imposed on velocity](./src/QuadControl.cpp#L216) vs [constraints imposed on acceleration](./src/QuadControl.cpp#L346-L347). Accelerations can be directly controlled by changing the net force by varying the omegas of rotors. So this constraint can be put after finding the output from the PID controller. If the controller asks for a=2.2 m/s^2 and quad is only capable of providing 2 m/s^2, the desired acceleration can be overwritten by this threshold. This is not the case for velocity constrains. Let's say, we need a velocity higher than maxAscentRate. We give it to the controller and it generates some acceleration to achieve it. Now, that would result in the increase in velocity. Now if it already has some acceleration, the quad's velocity cannot be changed immediately if it surpasses the maximum velocity threshold even by instantaneously changing the acceleration. To avoid that, the commanded velocity should be kept in check so that the quad never crosses the threshold.
 
 To test this, go back to scenario 2 and make sure the drone doesn't fall. In that scenario, the desired z position is set at some constant value with zero net velocity and acceleration. In this case, the thrust should be `mass * CONST_GRAVITY`.
 
-- [LateralPositionControl](./src/QuadControl.cpp#L239-L306): This is [cascaded proportional controller](https://www.overleaf.com/read/bgrkghpggnyc#/61023787/) (inner one to get velocity and an outer one to get acceleration) to control acceleration on `x` and `y`. This helps us in tuning the parameters as there exists a relation between gains for a critically damped condition (`Kv`/`Kp` ~ 4). 
+- [LateralPositionControl](./src/QuadControl.cpp#L239-L306): This is [cascaded proportional controller](./Double_Integrator_Control__Cascaded_P_Controller_Gains_vs_Damping_Ratio.pdf) (inner one to get velocity and an outer one to get acceleration) to control acceleration on `x` and `y`. This helps us in tuning the parameters as there exists a relation between gains for a critically damped condition (`Kv`/`Kp` ~ 4). 
  
 It is important to note the way velocity and accleration constrainsts have been applied in the X-Y plane. Recall that while finding the magnitude a vector, if each component is scaled by a factor `k` then the magnitude of the whole vector gets scaled by `k`. To limit the net velocity and acceleration in X-Y plane, a downscaling factor needs to be calculated so that net vector's magnitude stays within the constrained values.   
 
